@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impression Fichero 30x14</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;background:#f3f6f9;margin:0;color:#172033}.wrap{max-width:900px;margin:32px auto;padding:0 18px}.card{background:white;border-radius:14px;padding:22px;box-shadow:0 5px 20px #0001;margin-bottom:18px}h1{margin:0 0 8px;font-size:25px}.sub{color:#607086}.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}button{border:0;border-radius:8px;padding:11px 16px;font-weight:700;cursor:pointer;background:#1769aa;color:white}button.secondary{background:#e8eef5;color:#17365d}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:8px 11px;border-radius:20px;background:#eee}.ok{background:#dff5e4;color:#17652a}.err{background:#fee4e2;color:#a6221a}#list{display:grid;gap:12px}.item{display:grid;grid-template-columns:34px 1fr 250px;gap:14px;align-items:center;padding:10px;border:1px solid #dfe6ee;border-radius:10px}.preview{width:240px;height:96px;border:1px solid #111;background:#fff;image-rendering:pixelated}.meta{font-size:13px;color:#637182}.title{font-weight:700}@media(max-width:650px){.item{grid-template-columns:30px 1fr}.preview{grid-column:2}}</style></head>
+<body><div class="wrap">
+<div class="card"><h1>Impression étiquettes Fichero</h1><div class="sub">30 × 14 mm • 3 lignes • FICHERO_5836 / D11s</div><br>
+<div class="bar"><button id="connect">Connecter Fichero</button><button id="print" disabled>Imprimer la sélection</button><button id="all" class="secondary">Tout sélectionner</button><span id="status" class="status">Non connectée</span></div></div>
+<div class="card"><div id="list"></div></div></div>
+<script>
+const SERVICES=[
+ ['000018f0-0000-1000-8000-00805f9b34fb','00002af1-0000-1000-8000-00805f9b34fb'],
+ ['0000ff00-0000-1000-8000-00805f9b34fb','0000ff02-0000-1000-8000-00805f9b34fb']
+];
+let device=null, writeChar=null;
+const $=s=>document.querySelector(s), list=$('#list'), statusEl=$('#status');
+function b64uDecode(s){s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; return decodeURIComponent(escape(atob(s)))}
+function getLabels(){try{const m=location.hash.match(/(?:^#|&)data=([^&]+)/);return m?JSON.parse(b64uDecode(m[1])):[]}catch(e){setStatus('Données Excel invalides',false);return[]}}
+let labels=getLabels();
+function setStatus(t,ok=null){statusEl.textContent=t;statusEl.className='status'+(ok===true?' ok':ok===false?' err':'')}
+function fit(ctx,text,maxWidth,maxPx=25,minPx=8){for(let s=maxPx;s>=minPx;s--){ctx.font=`700 ${s}px Arial`;if(ctx.measureText(text).width<=maxWidth)return s}return minPx}
+function makeCanvas(d){const c=document.createElement('canvas');c.width=240;c.height=96;const x=c.getContext('2d',{willReadFrequently:true});x.fillStyle='#fff';x.fillRect(0,0,240,96);x.fillStyle='#000';x.textBaseline='middle';const lines=[String(d.l1||''),String(d.l2||''),String(d.l3||'')];const ys=[16,48,80];lines.forEach((t,i)=>{const s=fit(x,t,232);x.font=`700 ${s}px Arial`;x.textAlign=i===1?'right':'left';x.fillText(t,i===1?236:4,ys[i])});return c}
+function render(){list.innerHTML=''; if(!labels.length){list.innerHTML='<div class="meta">Aucune donnée. Lancez l’impression depuis Excel.</div>';return} labels.forEach((d,i)=>{const row=document.createElement('div');row.className='item';const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.dataset.i=i;const info=document.createElement('div');info.innerHTML=`<div class="title">${esc(d.l1)}</div><div>${esc(d.l2)}</div><div>${esc(d.l3)}</div><div class="meta">${esc(d.source||'')}</div>`;const c=makeCanvas(d);c.className='preview';row.append(cb,info,c);list.append(row)})}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+async function connect(){try{device=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'FICHERO_'},{namePrefix:'D11s_'}],optionalServices:SERVICES.map(x=>x[0])});const server=await device.gatt.connect();for(const [su,cu] of SERVICES){try{const svc=await server.getPrimaryService(su);writeChar=await svc.getCharacteristic(cu);break}catch(e){}}if(!writeChar)throw new Error('Service BLE compatible introuvable');device.addEventListener('gattserverdisconnected',()=>{writeChar=null;$('#print').disabled=true;setStatus('Déconnectée',false)});$('#print').disabled=false;setStatus('Connectée : '+(device.name||'Fichero'),true)}catch(e){setStatus(e.message||String(e),false)}}
+function u8(...v){return new Uint8Array(v)}
+async function writeChunked(data){const chunk=180;for(let i=0;i<data.length;i+=chunk){const part=data.slice(i,i+chunk);if(writeChar.writeValueWithoutResponse)await writeChar.writeValueWithoutResponse(part);else await writeChar.writeValue(part)}}
+function raster(c){const x=c.getContext('2d'),img=x.getImageData(0,0,240,96).data;const out=new Uint8Array(12*240);for(let row=0;row<240;row++){for(let px=0;px<96;px++){/* visual canvas 240x96 -> printhead 96 x feed 240 */const vx=row,vy=95-px,idx=(vy*240+vx)*4;const lum=(img[idx]+img[idx+1]+img[idx+2])/3;if(lum<128)out[row*12+(px>>3)]|=1<<(7-(px&7))}}return out}
+async function printOne(d){const c=makeCanvas(d),bits=raster(c),rows=240;await writeChunked(u8(0x10,0xff,0x10,0x00,0x01));await writeChunked(u8(0x10,0xff,0x84,0x00));await writeChunked(new Uint8Array(12));await writeChunked(u8(0x10,0xff,0xfe,0x01));await writeChunked(u8(0x1d,0x76,0x30,0x00,0x0c,0x00,rows&255,rows>>8));await writeChunked(bits);await writeChunked(u8(0x1d,0x0c));await writeChunked(u8(0x10,0xff,0xfe,0x45));await new Promise(r=>setTimeout(r,900))}
+async function printSelected(){if(!writeChar){setStatus('Connectez d’abord la Fichero',false);return}const ids=[...document.querySelectorAll('input[type=checkbox]:checked')].map(x=>+x.dataset.i);if(!ids.length){setStatus('Aucune étiquette sélectionnée',false);return}$('#print').disabled=true;try{for(let n=0;n<ids.length;n++){setStatus(`Impression ${n+1}/${ids.length}…`);await printOne(labels[ids[n]])}setStatus(`${ids.length} étiquette(s) envoyée(s)`,true)}catch(e){setStatus('Erreur : '+(e.message||e),false)}finally{$('#print').disabled=!writeChar}}
+$('#connect').onclick=connect;$('#print').onclick=printSelected;$('#all').onclick=()=>document.querySelectorAll('input[type=checkbox]').forEach(x=>x.checked=true);render();
+</script></body></html>
